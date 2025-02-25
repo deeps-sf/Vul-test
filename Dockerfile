@@ -17,6 +17,7 @@ COPY . /src
 
 # Jekyll runs on port 4000 by default
 EXPOSE 4000
+EXPOSE 4000
 
 # Run jekyll serve - jekyll will build first to create a plain html file for TOS update
 CMD ["./jekyll-serve.sh"]
