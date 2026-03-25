@@ -655,7 +655,8 @@
         </plugins>
     </build>
     <!--@todo, danielw - use the way the connectors do deploy/publish in the same way it works for bigid-connectors-cims, for example-->
-    <distributionManagement>
+   +++
+           <distributionManagement>
         <repository>
             <id>central</id>
             <name>libs-release</name>
