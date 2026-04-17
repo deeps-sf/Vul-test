@@ -1,0 +1,18 @@
+name: GitHub Actions Demo2
+run-name: ${{ github.actor }} is testing out GitHub Actions
+on: [push]
+jobs:
+  Explore-GitHub-Actions:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v2
+
+      - name: Run Prisma Cloud 
+        id: prisma-cloud
+        uses: bridgecrewio/checkov-action@master 
+        env:
+          PRISMA_API_URL: https://api2.prismacloud.io
+        with:
+          log_level: DEBUG
+          api-key: ${{ secrets.BC_API_KEY }}
