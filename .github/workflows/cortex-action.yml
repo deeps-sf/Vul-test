@@ -51,6 +51,5 @@ jobs:
           --repo-id "${{github.repository}}" \
           --branch "${{github.ref_name}}" \
           --source "GITHUB_ACTIONS" \
-          --framework "SCA" \
           --create-repo-if-missing
           
