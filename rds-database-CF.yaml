@@ -199,7 +199,7 @@ Outputs:
   
   DBSecurityGroupId:
     Description: 'Security group ID for the database'
-    Value: !Ref DBSecurityGroup1
+    Value: !Ref DBSecurityGroup
     Export:
       Name: !Sub '${AWS::StackName}-SecurityGroupId'
   
