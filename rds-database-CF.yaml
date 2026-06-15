@@ -1,0 +1,211 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'RDS Database CloudFormation Template with Security Misconfigurations'
+
+Parameters:
+  DBInstanceIdentifier:
+    Type: String
+    Default: 'mydb-instance'
+    Description: 'Database instance identifier'
+  
+  DBName:
+    Type: String
+    Default: 'mydatabase'
+    Description: 'Database name'
+  
+  DBUsername:
+    Type: String
+    Default: 'admin'
+    Description: 'Database master username'
+  
+  DBPassword:
+    Type: String
+    Default: 'Password123!'
+    NoEcho: false
+    Description: 'Database master password'
+
+Resources:
+  # CRITICAL: DB Security Group with overly permissive ingress rules
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Security group for RDS database'
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        # CRITICAL: Allows access from anywhere (0.0.0.0/0)
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 0.0.0.0/0
+          Description: 'Allow MySQL access from anywhere'
+      Tags:
+        - Key: Name
+          Value: 'RDS-SecurityGroup'
+
+  # RDS DB Instance with multiple misconfigurations
+  DBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Ref DBInstanceIdentifier
+      DBName: !Ref DBName
+      Engine: mysql
+      EngineVersion: '5.7.44'
+      DBInstanceClass: db.t3.micro
+      AllocatedStorage: 20
+      StorageType: gp2
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      VPCSecurityGroups:
+        - !Ref DBSecurityGroup
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      
+      # CRITICAL: Public accessibility enabled
+      PubliclyAccessible: true
+      
+      # HIGH: Backup retention period set to 0 (no backups)
+      BackupRetentionPeriod: 0
+      
+      # HIGH: Deletion protection disabled
+      DeletionProtection: false
+      
+      # HIGH: Storage encryption disabled
+      StorageEncrypted: false
+      
+      # HIGH: Auto minor version upgrade disabled
+      AutoMinorVersionUpgrade: false
+      
+      # HIGH: Multi-AZ disabled (no high availability)
+      MultiAZ: false
+      
+      # HIGH: Enhanced monitoring disabled
+      MonitoringInterval: 0
+      
+      # HIGH: Performance Insights disabled
+      EnablePerformanceInsights: false
+      
+      # HIGH: CloudWatch Logs exports not configured
+      EnableCloudwatchLogsExports: []
+      
+      # CRITICAL: IAM database authentication disabled
+      EnableIAMDatabaseAuthentication: false
+      
+      Tags:
+        - Key: Environment
+          Value: 'Production'
+        - Key: Compliance
+          Value: 'None'
+
+  # VPC Configuration (minimal for demonstration)
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: 'RDS-VPC'
+
+  # PUBLIC Subnet 1
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: 'RDS-PublicSubnet1'
+
+  # PUBLIC Subnet 2
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: 'RDS-PublicSubnet2'
+
+  # HIGH: DB Subnet Group using PUBLIC subnets
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: 'Subnet group for RDS database'
+      SubnetIds:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      Tags:
+        - Key: Name
+          Value: 'RDS-SubnetGroup'
+
+  # Internet Gateway for public access
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: 'RDS-IGW'
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # Route Table for public subnets
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: 'RDS-PublicRouteTable'
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetRouteTableAssociation1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  SubnetRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+Outputs:
+  DBInstanceEndpoint:
+    Description: 'Database instance endpoint'
+    Value: !GetAtt DBInstance.Endpoint.Address
+    Export:
+      Name: !Sub '${AWS::StackName}-DBEndpoint'
+  
+  DBInstancePort:
+    Description: 'Database instance port'
+    Value: !GetAtt DBInstance.Endpoint.Port
+    Export:
+      Name: !Sub '${AWS::StackName}-DBPort'
+  
+  DBSecurityGroupId:
+    Description: 'Security group ID for the database'
+    Value: !Ref DBSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-SecurityGroupId'
+  
+  # CRITICAL: Exposing sensitive connection string
+  DBConnectionString:
+    Description: 'Database connection string with credentials'
+    Value: !Sub 'mysql://${DBUsername}:${DBPassword}@${DBInstance.Endpoint.Address}:${DBInstance.Endpoint.Port}/${DBName}'
+
+# Made with Bob
