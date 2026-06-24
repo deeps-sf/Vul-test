@@ -1,0 +1,126 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation '
+  
+  EnableVersioning:
+    Type: String
+    Description: Enable versioning for the S3 bucket
+    Default: 'Suspended'
+    AllowedValues:
+      - 'Enabled'
+      - 'Suspended'
+  
+  EnableEncryption:
+    Type: String
+    Description: Enable server-side encryption
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+Conditions:
+  HasBucketName: !Not [!Equals [!Ref BucketName, '']]
+  EnableEncryptionCondition: !Equals [!Ref EnableEncryption, 'true']
+
+Resources:
+  S3Bucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      BucketName: !If [HasBucketName, !Ref BucketName, !Ref 'AWS::NoValue']
+      # MISCONFIGURATION 1: Versioning disabled by default
+      VersioningConfiguration:
+        Status: !Ref EnableVersioning
+      # MISCONFIGURATION 2: Encryption disabled by default
+      BucketEncryption: !If
+        - EnableEncryptionCondition
+        - ServerSideEncryptionConfiguration:
+            - ServerSideEncryptionByDefault:
+                SSEAlgorithm: 'AES256'
+        - !Ref 'AWS::NoValue'
+      # MISCONFIGURATION 3: Public access NOT blocked
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      # MISCONFIGURATION 4: No lifecycle rules for cleanup
+      # LifecycleConfiguration removed
+      # MISCONFIGURATION 5: Missing logging configuration
+      Tags:
+        - Key: Name
+          Value: !If [HasBucketName, !Ref BucketName, !Ref 'AWS::StackName']
+        - Key: ManagedBy
+          Value: CloudFormation
+        - Key: Environment
+          Value: Development
+
+  # MISCONFIGURATION 6: Overly permissive bucket policy
+  S3BucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref S3Bucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          # MISCONFIGURATION 7: Allows public read access
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: 
+              - 's3:GetObject'
+              - 's3:GetObjectVersion'
+            Resource: !Sub '${S3Bucket.Arn}/*'
+          # MISCONFIGURATION 8: No HTTPS enforcement (missing SecureTransport condition)
+          - Sid: AllowAllActions
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt S3Bucket.Arn
+              - !Sub '${S3Bucket.Arn}/*'
+
+  # MISCONFIGURATION 9: Bucket ACL with public read access
+  S3BucketAcl:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref S3Bucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: GrantPublicRead
+            Effect: Allow
+            Principal: '*'
+            Action: 's3:GetObject'
+            Resource: !Sub '${S3Bucket.Arn}/*'
+
+Outputs:
+  BucketName:
+    Description: Name of the S3 bucket
+    Value: !Ref S3Bucket
+    Export:
+      Name: !Sub '${AWS::StackName}-BucketName'
+  
+  BucketArn:
+    Description: ARN of the S3 bucket
+    Value: !GetAtt S3Bucket.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-BucketArn'
+  
+  BucketDomainName:
+    Description: Domain name of the S3 bucket
+    Value: !GetAtt S3Bucket.DomainName
+    Export:
+      Name: !Sub '${AWS::StackName}-BucketDomainName'
+  
+  BucketRegionalDomainName:
+    Description: Regional domain name of the S3 bucket
+    Value: !GetAtt S3Bucket.RegionalDomainName
+    Export:
+      Name: !Sub '${AWS::StackName}-BucketRegionalDomainName'
+  
+  # MISCONFIGURATION 10: Exposing bucket URL publicly
+  BucketWebsiteURL:
+    Description: Public URL of the S3 bucket
+    Value: !Sub 'http://${S3Bucket}.s3-website-${AWS::Region}.amazonaws.com'
+
+# WARNING: This template contains intentional security misconfigurations for testing purposes
+# DO NOT use in production environments
