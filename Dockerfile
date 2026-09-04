@@ -23,3 +23,4 @@ CMD ["npm", "start"]
 
 FROM centos:7.9.2009
 cd go && git checkout go1.25.5 && \
++++
