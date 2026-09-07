@@ -34,11 +34,18 @@ jobs:
     - name: Download cortexcli
       run: |
         set -x
-        crtx_resp=$(curl -s "${CORTEX_API_URL}/public_api/v1/unified-cli/releases/download-link?os=linux&architecture=amd64" \
+        crtx_resp=$(curl -s -f "${CORTEX_API_URL}/public_api/v1/unified-cli/releases/download-link?os=linux&architecture=amd64" \
           -H "x-xdr-auth-id: ${CORTEX_API_KEY_ID}" \
           -H "Authorization: ${CORTEX_API_KEY}")
-        crtx_url=$(echo $crtx_resp | jq -r ".signed_url")
-        curl -o cortexcli "$crtx_url"
+        
+        crtx_url=$(echo "$crtx_resp" | jq -e -r ".signed_url")
+        
+        if [ "$crtx_url" == "null" ] || [ -z "$crtx_url" ]; then
+          echo "Failed to retrieve signed URL. API Response: $crtx_resp"
+          exit 1
+        fi
+
+        curl -s -L -o cortexcli "$crtx_url"
         chmod +x cortexcli
         ./cortexcli --version
 
