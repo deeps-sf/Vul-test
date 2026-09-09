@@ -1,109 +1,56 @@
-name: Cortex Upload Test
+name: Cortex CLI Code Scan
 
 on:
-  workflow_dispatch: # Allows you to run this manually from the "Actions" tab
+  push:
+    branches:
+      - main
+  workflow_dispatch:
 
 env:
-  CORTEX_API_KEY_ID: ${{ secrets.CORTEX_API_KEY_ID }}
-  CORTEX_API_KEY: ${{ secrets.CORTEX_API_KEY }}
+  CORTEX_API_KEY: ${{secrets.CORTEX_API_KEY}}
+  CORTEX_API_KEY_ID: ${{secrets.CORTEX_API_KEY_ID}}
   CORTEX_API_URL: https://c3-tac-prod.xdr.us.paloaltonetworks.com
-
+  CORTEX_CLI_VERSION: 0.8.11
+  
 jobs:
-  cortex_scan:
-    name: Cortex Security Scan
+  download-and-execute:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v2
-      
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-  
-      - name: Verify Node.js Version
-        run: node -v
-
-      - name: Download cortexcli
-        run: |
-          set -x
-          crtx_resp=$(curl "${CORTEX_API_URL}/public_api/v1/unified-cli/releases/download-link?os=linux&architecture=amd64" \
-            -H "x-xdr-auth-id: ${CORTEX_API_KEY_ID}" \
-            -H "Authorization: ${CORTEX_API_KEY}")
-          crtx_url=$(echo $crtx_resp | jq -r ".signed_url")
-          curl -o cortexcli $crtx_url
-          chmod +x cortexcli
-          ./cortexcli --version
+    - name: Checkout Repository
+      uses: actions/checkout@v2
     
-      - name: Run Cortex Code Scan (customer config)
-        id: scan
-        shell: bash
-        env:
-          CORTEXCLI_HOME: ${{ runner.temp }}/cortexcli
-          CORTEX_DEBUG: true
-        run: |
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v2
+      with:
+        platforms: arm64
+        
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y jq curl
 
-          SCAN_DIR="$(mktemp -d)"
-          EXCLUDE_FILE="${SCAN_DIR}/.cortex-excludes"
-          mkdir -p "${CORTEXCLI_HOME}"
-  
-          CORTEX_DEBUG_ARGS=()
-          if [ "${CORTEX_DEBUG}" = "true" ]; then
-            CORTEX_DEBUG_ARGS=(--log --log-level INFO --support)
-            echo "Diagnostico de Cortex habilitado"
-          fi
+    - name: Get Temporary Token
+      run: |
+        TOKEN_RESPONSE=$(curl --location "${CORTEX_API_URL}/public_api/cas/v1/cortex-cli/create-token" \
+          --header "Authorization: ${CORTEX_API_KEY}" \
+          --header "x-xdr-auth-id: ${CORTEX_API_KEY_ID}" \
+          --header 'Content-Type: application/json' \
+          --data '{}')
+        TEMP_TOKEN=$(echo $TOKEN_RESPONSE | jq -r '.token')
+        echo "TEMP_TOKEN=$TEMP_TOKEN" >> $GITHUB_ENV
 
-          # .github/ se excluye siempre para evitar escanear workflows/actions.
-          printf '.github\n' > "$EXCLUDE_FILE"
-          while IFS= read -r path; do
-            # Quita espacios al inicio/fin y omite lineas vacias.
-            path="${path#"${path%%[![:space:]]*}"}"
-            path="${path%"${path##*[![:space:]]}"}"
-            [ -z "$path" ] && continue
-            [ "$path" = ".github" ] && path=".github/"
-            [ "$path" = ".github/" ] && continue
-            printf '%s\n' "$path" >> "$EXCLUDE_FILE"
-          done <<< "${EXCLUDE_PATHS}"
+    - name: Pull Docker Image
+      run: |
+        docker pull distributions-dev.traps.paloaltonetworks.com/cli-docker/${{env.TEMP_TOKEN}}/method:arm64-${{env.CORTEX_CLI_VERSION}}-dev
+        docker tag distributions-dev.traps.paloaltonetworks.com/cli-docker/${{env.TEMP_TOKEN}}/method:arm64-${{env.CORTEX_CLI_VERSION}}-dev cortexcli:${{env.CORTEX_CLI_VERSION}}
 
-          echo "Construyendo workspace temporal para escaneo..."
-
-          # Cortex CLI 0.18.0 no soporta --exclude-path, por eso filtramos antes del scan.
-          tar -C "$SOURCE_DIR" --exclude-vcs --exclude-from "$EXCLUDE_FILE" -cf - . | tar -C "$SCAN_DIR" -xf -
-          echo "Directory scan: ${SCAN_DIR}"
-
-          set +e
-          ./cortexcli \
-            --api-base-url "${CORTEX_API_URL}" \
-            --api-key "${CORTEX_API_KEY}" \
-            --api-key-id "${CORTEX_API_KEY_ID}" \
-            code scan \
-            --directory "." \
-            --repo-id "aditikisara/gha_cortexcli" \
-            --branch "main" \
-            --source "GITHUB_ACTIONS" \
-            --repo-url "${{ github.server_url }}/${{ github.repository }}" \
-            --upload-mode upload \
-            --create-repo-if-missing
-          SCAN_EXIT=$?
-          set -e
-  
-          if [ "$SCAN_EXIT" -eq 0 ]; then
-            echo "Scan completado exitosamente"
-            exit 0
-          fi
-  
-          # Politica: el fallo siempre bloquea, salvo que el repo este en
-          # allow-failure.list (vive junto a este action.yml en tipti-actions).
-          ALLOW_FILE="${GITHUB_ACTION_PATH}/allow-failure.list"
-  
-          if [ -f "$ALLOW_FILE" ] && sed -e 's/#.*//' -e 's/[[:space:]]//g' "$ALLOW_FILE" | grep -Fqix "${GITHUB_REPOSITORY}"; then
-            echo "::warning::Cortex fallo (exit ${SCAN_EXIT}), pero ${GITHUB_REPOSITORY} esta en allow-failure.list. Pipeline continua."
-            exit 0
-          fi
-  
-          echo "::error::Cortex detecto problemas (exit ${SCAN_EXIT}). Pipeline bloqueado."
-          echo ""
-          echo "Opciones:"
-          echo "  1. Corregir los hallazgos de seguridad"
-          echo "  2. Excepcion temporal: equipo de Seguridad"
-          exit 1
+    - name: Run Docker Container
+      run: |
+        docker run --rm --platform linux/arm64 cortexcli:${{env.CORTEX_CLI_VERSION}} \
+          --api-base-url ${CORTEX_API_URL} \
+          --api-key ${CORTEX_API_KEY} \
+          --api-key-id ${CORTEX_API_KEY_ID} \
+          code scan \
+          --directory . \
+          --repo-id ${{github.repository}}
